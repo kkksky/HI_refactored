@@ -212,4 +212,31 @@ commit 3: 基准测试 + 完整报告
 
 ---
 
+## 附: Git 提交与上传
+
+```bash
+# 1. 克隆到本地（首次）
+git clone https://github.com/KKKSKY/HI_refactored.git
+cd HI_refactored
+
+# 2. 日常开发流程
+git add <修改的文件>
+git commit -m "说明改了什么"
+git push
+
+# 3. 如何生成 Personal Access Token（用于HTTPS提交）
+#    浏览器 → GitHub Settings → Developer settings → Personal access tokens
+#    → Fine-grained tokens → Generate new token
+#    权限: Contents → Read and write
+#    → 复制 token
+
+# 4. 首次推送到新仓库
+git remote add origin https://github.com/KKKSKY/HI_refactored.git
+git push -u origin master
+
+# 注: Token 只在推送时临时使用，不要提交到代码中
+```
+
+---
+
 *生成时间: 2026-06-29*
