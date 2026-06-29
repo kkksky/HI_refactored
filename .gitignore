@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.so
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated outputs
+output/
+
+# Large data files
+*.tif
+# *.npy tracked in HI/ (outside repo), output/ excluded above
+# *.png tracked in output/ (excluded above)
+
+# Memory & config
+.claude/
