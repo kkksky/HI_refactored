@@ -103,12 +103,16 @@ HI_refactored/
 │   ├── pipeline.py                    ← 完整数据处理流水线
 │   ├── gui_tkinter.py                 ← Tkinter 交互式光谱查看器
 │   └── gui_streamlit.py              ← Streamlit Web 光谱查看器
-│
-└── scripts/                           ← 可执行脚本
-    ├── run_pipeline.py                ← 运行完整流水线
-    ├── run_detection.py               ← 运行目标检测
-    ├── train_autoencoder.py           ← 训练自编码器
-    └── train_contrastive.py           ← 训练对比学习模型
+    ├── noise_filter.py                ← 陷波滤波核心模块
+    ├── scripts/                           ← 可执行脚本
+    │   ├── run_pipeline.py                ← 运行完整流水线
+    │   ├── run_real_pipeline.py           ← 真实数据流水线 (噪声滤波)
+    │   ├── run_detection.py               ← 运行目标检测
+    │   ├── train_autoencoder.py           ← 训练自编码器
+    │   ├── train_contrastive.py           ← 训练对比学习模型
+    │   ├── compare_filter_results.py      ← 滤波效果对比
+    │   └── benchmark_postprocessing.py    ← 后处理策略基准
+
 ```
 
 ### 数据流
