@@ -1,6 +1,8 @@
-# 🔧 高光谱检测噪声抑制 — 代码改动说明
+# 🔧 高光谱目标检测 — 全部代码改动与实验结果说明
 
 ## 项目: 光谱视频摄像机 · HI_refactored
+## 用户: kkksky (GitHub)
+## 仓库: https://github.com/kkksky/HI_refactored
 
 ---
 
@@ -13,19 +15,20 @@
 | 3 | `scripts/compare_filter_results.py` | **修改** | 修复目标模板不匹配问题 |
 | 4 | `scripts/benchmark_postprocessing.py` | **新建** | 后处理策略基准测试脚本 |
 | 5 | `output/filtered_targets/` | **新建** | 滤波后匹配目标模板 |
-| 6 | `output/水波纹噪声分析报告.md` | **新建** | 图文并茂的完整分析报告 |
+| 6 | `output/水波纹噪声分析报告.md` | **新建** | 水波纹噪声分析报告 |
 | 7 | `output/benchmark/` | **新建** | 45种方案对比结果 |
+| 8 | `scripts/deep_learning_detection.py` | **新建** | DL vs 传统综合对比框架 |
+| 9 | `README.md` | **修改** | 去除南京大学引用 |
 
 ---
 
-## 1. `noise_filter.py` — 陷波滤波器模块 (新建)
+## Part 1: 水波纹噪声消除系统
 
-**位置**: `HI_refactored/noise_filter.py`
+### 1.1 `noise_filter.py` —陷波滤波器模块
 
-### 功能
 空间频域高斯窄带陷波滤波器，去除高光谱图像中的光学干涉条纹噪声。
 
-### 核心类: `NotchFilter`
+**核心类: `NotchFilter`**
 
 | 方法 | 作用 | 计算量 |
 |------|------|--------|
@@ -34,207 +37,146 @@
 | `filter_reflectance_cube(cube)` | 逐波段1D列FFT陷波 | B×H次FFT |
 | `filter_score_map(sm, method)` | Score Map后处理 | O(HW) |
 
-### 陷波参数
-- **频率**: 1/17.5, 1/8.8, 1/5.9 px⁻¹ (基频+谐波)
-- **带宽**: σ=0.005 px⁻¹ (高斯窄带)
-- **衰减**: A=0.95 (保留5%避免振铃)
+**陷波参数**: 频率 1/17.5, 1/8.8, 1/5.9 px⁻¹ (基频+谐波)
+**Score Map后处理**: median5/7/9, gaussian, open/close, med_open, full
 
-### Score Map后处理方法
-| 方法 | 说明 |
-|------|------|
-| `median5/7/9` | N×N中值滤波 |
-| `gaussian` | 高斯平滑 (σ=kernel/3) |
-| `open` | 形态学开运算 (腐蚀→膨胀) |
-| `close` | 形态学闭运算 (膨胀→腐蚀) |
-| `med_open` | 中值5×5 + 开运算 (推荐) |
-| `full` | 中值5×5 + 开运算 + 中值5×5 |
+### 1.2 三级级联滤波架构
+
+```
+Sky 图像 → ① 2D陷波 → 反射率 → ② 逐波段1D陷波 → Score Map → ③ 后处理
+```
+
+CLI: `--filter {none,sky,reflectance,scores,full}` + `--post {none,med_open,...}`
+
+### 1.3 Bug修复: 目标模板不匹配
+
+用户发现滤波后检测效果变差，原因是目标模板来自未滤波反射率。
+修复: `extract_targets_from_reflectance()` 从滤波后反射率重新提取目标。
 
 ---
 
-## 2. `scripts/run_real_pipeline.py` — Pipeline (修改)
+## Part 2: 深度学习 vs 传统方法综合对比
 
-### 新增CLI参数
+### 2.1 `scripts/deep_learning_detection.py` — 统一对比框架
 
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `--filter` | str | `none` | 滤波级别: `none/sky/reflectance/scores/full` |
-| `--post` | str | `median5` | Score Map后处理: `none/median5/median7/median9/gaussian/open/close/med_open/full` |
-| `--post-kernel` | int | 5 | 后处理滤波核大小 |
-| `--target-dir` | str | None | 目标模板目录 (默认从hi-dir加载) |
+一个脚本实现全部方法的对比，基于全图 `mask.npy` 地真评估。
 
-### 新增数据流
+**支持的方法:**
 
-```
-  反射率计算:
-    raw → subtract_dark → compute_reflectance
-        → [Sky 2D陷波] → [Reflectance逐波段陷波] → 输出
+| 方法 | 类型 | 需要训练 | 需目标光谱 |
+|------|------|---------|-----------|
+| ACE | 传统GLRT | ❌ | ✅ |
+| SACE | 传统角度+能量 | ❌ | ✅ |
+| SpectralAE | 无监督DL(AE) | ✅ | ❌ |
+| Spectral1DCNN | 有监督DL(1D-CNN) | ✅ | ❌ |
+| SpectralSpatialCNN | 有监督DL(2D-CNN) | ✅ | ❌ |
+| DerivACE | 光谱导数+ACE | ❌ | ✅ |
+| RX / SSRX | 异常检测(马氏距离) | ❌ | ❌ |
+| Ensemble | 多方法融合 | ❌ | ✅ |
 
-  检测后处理:
-    score_map → [中值滤波/开运算/组合] → 连通区域过滤 → 可视化
-```
+**评估指标:** AUC(测试集) + F1/IoU/Precision/Recall(像素级)
 
-### 典型用法
+### 2.2 实验 1: 1D-CNN 阈值扫描
+
+- 对 Spectral1DCNN 在验证集上扫描阈值 [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.98]
+- 选最佳 F1 对应的阈值用于测试集评估
+
+### 2.3 实验 2: SACE + med_open 后处理
+
+- ACE/SACE 的 score map 可做 med_open 后处理
+- Notch Filter 对传统方法帮助显著: ACE的F1从0.503→0.588 (+17%)
+
+### 2.4 实验 3: Notch Filter + SACE 全流程
+
+对比无滤波 vs 全滤波(full+med_open)下所有方法的 F1 变化
+
+### 2.5 实验 4: AE 架构增强 (失败)
+
+- 收紧瓶颈 16→8 + L1稀疏正则 + Dropout
+- 结果: 瓶颈太紧导致信息坍缩, F1=0.000
+
+### 2.6 实验 5: InfoNCE + Mahalanobis 检测器 (失败)
+
+- 复用 HI/对比学习.py 的 InfoNCE 对比学习方案
+- 结果: 嵌入空间区分度不够, F1=0.015
+
+### 2.7 实验 6: Spectral-Spatial Patch CNN
+
+- 5×5 空间邻域 × 93 波段的光谱-空间联合 2D-CNN
+- 问题: 色散导致波段间空间错位, CNN学不到一致的空间特征
+- F1=0.512 (远不如1D-CNN的0.695)
+
+### 2.8 实验 7: 训练/验证/测试集分割修复
+
+**重要修正**: 之前 AUC 和 F1 是用全量数据算的 (含训练集), 严重虚高。
+
+| 阶段 | AUC | F1 |
+|------|-----|-----|
+| 修复前 (含训练数据泄露) | 0.995 | 0.770 |
+| 修复后 (测试集独立) | **0.9925** | **0.695** |
+
+### 2.9 实验 8: 无监督增强算法
+
+| 方法 | F1 | AUC | 分析 |
+|------|-----|-----|------|
+| ACE (基线) | 0.588 | 0.964 | 无监督中最佳 |
+| DerivACE | 0.556 | 0.959 | 导数放大噪声 |
+| RX/SSRX | 0.000 | 0.42 | 纯无监督无效 |
+| Ensemble | 0.230 | 0.963 | 召回率极高(0.964)但精度低 |
+
+---
+
+## Part 3: 最终结论与推荐
+
+### 3.1 最终排名 (测试集独立评估)
+
+| 方法 | F1 | AUC | Precision | Recall | 特点 |
+|------|-----|-----|-----------|--------|------|
+| **1D-CNN + Notch** | **0.695** | **0.9925** | 0.664 | 0.730 | 🏆 综合最强 |
+| ACE + Notch | 0.588 | 0.964 | 0.703 | 0.505 | 无需训练, 稳定 |
+| SACE + Notch | 0.580 | 0.964 | 0.706 | 0.492 | 角度约束 |
+| DerivACE | 0.556 | 0.959 | 0.552 | 0.560 | 导数效果有限 |
+| SpectralSpatialCNN | 0.512 | 0.964 | 0.835 | 0.370 | 色散导致错位 |
+| Ensemble | 0.230 | 0.963 | 0.131 | 0.964 | 召回率最高 |
+
+### 3.2 关键发现
+
+1. **1D-CNN 是当前最佳** — 非线性光谱滤波器 + 良好正则化
+2. **Notch Filter 对传统方法帮助大** — ACE F1 +17%, SACE +15%
+3. **无监督方法打不过有监督** — 目标和背景光谱差异太微妙
+4. **光谱-空间联合因色散错位无效** — 棱镜色散导致波段间像素偏移
+
+### 3.3 推荐用法
 
 ```bash
-# 原始流程 (无滤波)
-python scripts/run_real_pipeline.py --dx 195 --dy -30
+# 实战最佳 (含训练/验证/测试分割)
+python scripts/deep_learning_detection.py --dx 195 --dy -30 \
+  --filter full --post med_open \
+  --target-dir output/filtered_targets \
+  --output output/result
 
-# 全套降噪 (推荐)
-python scripts/run_real_pipeline.py --dx 195 --dy -30 \
-    --filter full --post med_open --method all \
-    --target-dir output/filtered_targets
+# 仅评估传统方法 (快速, 无监督)
+python scripts/deep_learning_detection.py --dx 195 --dy -30 \
+  --filter full --post med_open \
+  --target-dir output/filtered_targets \
+  --skip-cnn --skip-ae
 ```
 
 ---
 
-## 3. `scripts/compare_filter_results.py` — 滤波效果对比 (修改)
-
-### 修复: 目标模板匹配问题
-
-**问题**: 原始脚本使用 `HI/target{1-3}.npy` (从**未滤波**反射率提取) 去检测滤波后场景 → 目标/场景不匹配 → 虚假的过度抑制
-
-**修复**: 新增 `extract_targets_from_reflectance(reflect, hi_dir)` 函数
-
-**提取流程**:
-```
-id_to_key.json (13042个标注点)
-  → 筛选 mask=4/5/6 → target 1/2/3
-  → 通过 coords_dict.json 获取93波段坐标
-  → 从滤波后反射率中提取光谱值
-  → 输出: {1: (81,93), 2: (124,93), 3: (20,93)}
-```
-
-**验证**: 提取数量与原始目标完全一致 (81/124/20条光谱)
-
----
-
-## 4. `scripts/benchmark_postprocessing.py` — 基准测试 (新建)
-
-### 功能
-对5种检测算法 × 9种后处理策略 = 45种组合进行全面对比
-
-### 评分标准
-```
-综合分 = 保留像素/1000 + 背景σ×5000  (越低越好)
-```
-
-### 输出
-- `output/benchmark/comparison_table.txt` — 全量对比表
-- `output/benchmark/winner_report.txt` — 最佳方案
-- `output/benchmark/heatmap_{METHOD}.png` — 每种算法的后处理对比热力图
-
-### 用法
-```bash
-python scripts/benchmark_postprocessing.py --dx 195 --dy -30
-```
-
----
-
-## 5. `output/filtered_targets/` — 滤波后目标模板 (新建)
-
-`run_real_pipeline.py` 调用 `load_target_templates(hi_dir, target_dir)` 时：
-- 如果 `--target-dir` 指定了 `output/filtered_targets/`，优先加载该目录下的目标
-- 此时目标和场景数据都在滤波后反射率中提取，完全匹配
-
-### 验证指标
-
-| 对比项 | 原始目标(不匹配) | 滤波后目标(匹配) |
-|--------|-----------------|-----------------|
-| ACE检测像素 (score map) | 7,402 (过度抑制) | 34,416 (合理) |
-| ACE最大分数 | 0.3602 | 0.4131 |
-| 结论 | ❌ 错误对比 | ✅ 正确对比 |
-
----
-
-## 6. 诊断脚本 (未改动，保留)
-
-以下脚本为之前会话创建的噪声分析工具，未修改：
-
-| 脚本 | 用途 |
-|------|------|
-| `scripts/noise_summary_plot.py` | 噪声机理综合诊断图 |
-| `scripts/noise_verify.py` | 噪声来源交叉验证 |
-| `scripts/noise_deep_analysis.py` | 深度噪声分析 |
-| `scripts/noise_source_pinpoint.py` | 噪声源精确定位 |
-
----
-
-## 7. 推荐使用方式
-
-### 新检测基准
+## Part 4: Git 配置
 
 ```bash
-# 1. 生成滤波后匹配目标
-python -c "
-from noise_filter import NotchFilter
-from data.preprocessing import subtract_dark_current, compute_reflectance
-# ... (详见 benchmark_postprocessing.py)
-"
+# SSH 方式 (已配置)
+git remote set-url origin git@github.com:kkksky/HI_refactored.git
+# SSH 密钥: ~/.ssh/github_kkksky (ed25519)
+# 推送:
+GIT_SSH_COMMAND="ssh -i ~/.ssh/github_kkksky" git push
 
-# 2. 跑全流程
-python scripts/run_real_pipeline.py \
-    --dx 195 --dy -30 \
-    --filter full --post med_open --method all \
-    --target-dir output/filtered_targets
-```
-
-### 推荐方案: SACE + Notch Filter(Full) + med_open
-
-| 维度 | 选择 | 理由 |
-|------|------|------|
-| 检测算法 | **SACE** | 角度约束+协方差，综合抗噪最强 |
-| 空间滤波 | **Notch Full** | 去除光学干涉条纹源头 |
-| Score Map | **med_open** | 保留最大分的同时降低背景噪声 |
-| 目标模板 | **滤波后提取** | 目标/场景数据同源匹配 |
-
----
-
-## 附: git 提交建议
-
-如需提交到git，建议按功能分3个commit：
-
-```
-commit 1: 添加陷波滤波器模块
-  - noise_filter.py (新建)
-  - run_real_pipeline.py: 添加 --filter 参数
-
-commit 2: 修复目标模板匹配 + 增强后处理
-  - compare_filter_results.py: extract_targets_from_reflectance()
-  - noise_filter.py: filter_score_map 增加形态学方法
-  - run_real_pipeline.py: 添加 --post/--target-dir 参数
-  - output/filtered_targets/ (生成物)
-
-commit 3: 基准测试 + 完整报告
-  - scripts/benchmark_postprocessing.py (新建)
-  - output/水波纹噪声分析报告.md (新建)
-  - output/benchmark/ (生成物)
-```
-
----
-
-## 附: Git 提交与上传
-
-```bash
-# 1. 克隆到本地（首次）
-git clone https://github.com/KKKSKY/HI_refactored.git
-cd HI_refactored
-
-# 2. 日常开发流程
-git add <修改的文件>
-git commit -m "说明改了什么"
+# 日常提交:
+git add <文件>
+git commit -m "说明"
 git push
-
-# 3. 如何生成 Personal Access Token（用于HTTPS提交）
-#    浏览器 → GitHub Settings → Developer settings → Personal access tokens
-#    → Fine-grained tokens → Generate new token
-#    权限: Contents → Read and write
-#    → 复制 token
-
-# 4. 首次推送到新仓库
-git remote add origin https://github.com/KKKSKY/HI_refactored.git
-git push -u origin master
-
-# 注: Token 只在推送时临时使用，不要提交到代码中
 ```
 
 ---
